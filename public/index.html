@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FABY SHOP - Robô WhatsApp Notificador</title>
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background: #090414;
+      color: #f1f5f9;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .card {
+      background: linear-gradient(145deg, #130a2a, #1b0e38);
+      border: 1px solid rgba(168, 85, 247, 0.3);
+      border-radius: 24px;
+      width: 100%;
+      max-width: 520px;
+      padding: 32px;
+      box-shadow: 0 25px 60px rgba(0,0,0,0.8), 0 0 35px rgba(168,85,247,0.15);
+      text-align: center;
+      position: relative;
+    }
+    .logo-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(34, 197, 94, 0.12);
+      border: 1px solid rgba(34, 197, 94, 0.3);
+      padding: 6px 14px;
+      border-radius: 30px;
+      color: #4ade80;
+      font-size: 0.85rem;
+      font-weight: 700;
+      margin-bottom: 18px;
+    }
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 800;
+      margin-bottom: 6px;
+      background: linear-gradient(135deg, #fff, #c084fc);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    p.subtitle {
+      font-size: 0.88rem;
+      color: #94a3b8;
+      margin-bottom: 24px;
+    }
+    .status-box {
+      background: rgba(10, 4, 22, 0.85);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 0.95rem;
+    }
+    .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #ef4444;
+      box-shadow: 0 0 10px #ef4444;
+      animation: pulse 1.8s infinite;
+    }
+    .dot.connected {
+      background: #22c55e;
+      box-shadow: 0 0 12px #22c55e;
+    }
+    .dot.connecting {
+      background: #f59e0b;
+      box-shadow: 0 0 12px #f59e0b;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(1.15); }
+    }
+    .qr-container {
+      background: #ffffff;
+      padding: 18px;
+      border-radius: 20px;
+      display: inline-block;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+      position: relative;
+    }
+    .qr-container img {
+      width: 260px;
+      height: 260px;
+      display: block;
+    }
+    .connected-view {
+      display: none;
+      padding: 20px 0;
+    }
+    .connected-icon {
+      font-size: 3.5rem;
+      margin-bottom: 12px;
+    }
+    .phone-pill {
+      display: inline-block;
+      background: rgba(34, 197, 94, 0.2);
+      border: 1px solid #22c55e;
+      color: #86efac;
+      padding: 8px 18px;
+      border-radius: 20px;
+      font-size: 1.15rem;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      margin-bottom: 16px;
+    }
+    .btn {
+      background: linear-gradient(135deg, #22c55e, #16a34a);
+      color: #fff;
+      border: none;
+      padding: 12px 20px;
+      border-radius: 12px;
+      font-weight: 700;
+      font-size: 0.92rem;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s;
+    }
+    .btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(34,197,94,0.4);
+    }
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.35);
+    }
+    .btn-danger:hover {
+      background: rgba(239, 68, 68, 0.3);
+      box-shadow: 0 4px 15px rgba(239,68,68,0.3);
+    }
+    .test-box {
+      margin-top: 24px;
+      padding-top: 20px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      text-align: left;
+    }
+    .test-box label {
+      display: block;
+      font-size: 0.8rem;
+      color: #cbd5e1;
+      margin-bottom: 6px;
+      font-weight: 600;
+    }
+    .test-box input, .test-box textarea {
+      width: 100%;
+      background: rgba(10, 4, 22, 0.95);
+      border: 1px solid rgba(255,255,255,0.15);
+      color: #fff;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 0.88rem;
+      margin-bottom: 10px;
+      outline: none;
+      font-family: inherit;
+    }
+    .test-box input:focus, .test-box textarea:focus {
+      border-color: #a855f7;
+    }
+    .instruction {
+      font-size: 0.82rem;
+      color: #cbd5e1;
+      line-height: 1.5;
+      background: rgba(168, 85, 247, 0.1);
+      border: 1px solid rgba(168, 85, 247, 0.25);
+      padding: 12px;
+      border-radius: 12px;
+      margin-bottom: 20px;
+      text-align: left;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="card">
+    <div class="logo-badge">
+      <span>🤖</span> FABY SHOP WHATSAPP BOT
+    </div>
+
+    <h1>Disparador Automático</h1>
+    <p class="subtitle">Notificações instantâneas de pedidos via WhatsApp</p>
+
+    <!-- Caixa de Status -->
+    <div class="status-box">
+      <div class="status-indicator">
+        <div class="dot" id="status-dot"></div>
+        <span id="status-text">Conectando...</span>
+      </div>
+      <button class="btn btn-danger" id="btn-disconnect" onclick="disconnectWhatsApp()" style="display:none; padding: 6px 12px; font-size: 0.78rem;">
+        Desconectar
+      </button>
+    </div>
+
+    <!-- Visão 1: Aguardando QR Code -->
+    <div id="view-qr" style="display:none;">
+      <div class="instruction">
+        <strong>Como Conectar:</strong><br>
+        1. Abra o WhatsApp no celular (<strong>+55 11999308909</strong>).<br>
+        2. Toque em <strong>Mais opções</strong> (⋮) ou <strong>Configurações</strong> &gt; <strong>Aparelhos conectados</strong>.<br>
+        3. Toque em <strong>Conectar um aparelho</strong> e aponte a câmera para o QR Code abaixo:
+      </div>
+
+      <div class="qr-container">
+        <img id="qr-image" src="" alt="QR Code WhatsApp" />
+      </div>
+      <p style="font-size: 0.78rem; color: #94a3b8;">O QR Code atualiza automaticamente se expirar.</p>
+    </div>
+
+    <!-- Visão 2: Conectado com Sucesso -->
+    <div id="view-connected" class="connected-view">
+      <div class="connected-icon">🎉</div>
+      <h2 style="font-size: 1.3rem; margin-bottom: 6px; color: #4ade80;">WhatsApp Ativo &amp; Operacional!</h2>
+      <p style="font-size: 0.85rem; color: #cbd5e1; margin-bottom: 12px;">Enviando notificações através do número:</p>
+      <div class="phone-pill" id="connected-phone">+55 11999308909</div>
+      
+      <p style="font-size: 0.82rem; color: #94a3b8; line-height: 1.4;">
+        Todas as notificações de conclusão de compras (Free Fire, Gift Cards, Streaming e Depósitos) serão enviadas automaticamente em segundo plano por este número.
+      </p>
+
+      <!-- Teste de Envio -->
+      <div class="test-box">
+        <label>Enviar Mensagem Teste:</label>
+        <input type="tel" id="test-phone" placeholder="Ex: +244940375951 ou 244940375951" />
+        <textarea id="test-message" rows="2" placeholder="Digite uma mensagem de teste...">Olá! Teste de envio automático do Robô WhatsApp FABY SHOP! 🚀💎</textarea>
+        <button type="button" class="btn" style="width: 100%; justify-content: center;" onclick="sendTestMessage()">
+          ✉️ Enviar Notificação Teste
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let pollInterval = null;
+
+    async function checkStatus() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+
+        const dot = document.getElementById('status-dot');
+        const text = document.getElementById('status-text');
+        const viewQr = document.getElementById('view-qr');
+        const viewConn = document.getElementById('view-connected');
+        const qrImg = document.getElementById('qr-image');
+        const btnDisc = document.getElementById('btn-disconnect');
+        const phonePill = document.getElementById('connected-phone');
+
+        if (data.connected) {
+          dot.className = 'dot connected';
+          text.textContent = '🟢 Conectado (' + (data.phone || 'Ativo') + ')';
+          viewQr.style.display = 'none';
+          viewConn.style.display = 'block';
+          btnDisc.style.display = 'inline-block';
+          if (phonePill && data.phone) phonePill.textContent = data.phone;
+        } else if (data.qr) {
+          dot.className = 'dot connecting';
+          text.textContent = '📱 Aguardando Escaneamento';
+          qrImg.src = data.qr;
+          viewQr.style.display = 'block';
+          viewConn.style.display = 'none';
+          btnDisc.style.display = 'none';
+        } else {
+          dot.className = 'dot';
+          text.textContent = '⏳ Gerando QR Code...';
+          viewQr.style.display = 'none';
+          viewConn.style.display = 'none';
+          btnDisc.style.display = 'none';
+        }
+      } catch (e) {
+        document.getElementById('status-dot').className = 'dot';
+        document.getElementById('status-text').textContent = '🔴 Servidor Offline';
+      }
+    }
+
+    async function disconnectWhatsApp() {
+      if (!confirm('Deseja realmente desconectar este WhatsApp e escanear um novo número?')) return;
+      try {
+        await fetch('/api/disconnect', { method: 'POST' });
+        checkStatus();
+      } catch (e) {
+        alert('Erro ao desconectar: ' + e.message);
+      }
+    }
+
+    async function sendTestMessage() {
+      const phone = document.getElementById('test-phone').value.trim();
+      const message = document.getElementById('test-message').value.trim();
+      if (!phone || !message) {
+        alert('Por favor informe o telefone e o texto da mensagem.');
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone, message })
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert('✅ Mensagem enviada com sucesso para ' + phone + '!');
+        } else {
+          alert('❌ Erro: ' + (data.error || 'Falha ao enviar'));
+        }
+      } catch (e) {
+        alert('Erro na requisição: ' + e.message);
+      }
+    }
+
+    checkStatus();
+    pollInterval = setInterval(checkStatus, 3000);
+  </script>
+</body>
+</html>
+
