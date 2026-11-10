@@ -133,9 +133,67 @@ function buildClientMessage(type, data) {
   }
 }
 
+// ─── PERSISTÊNCIA EM NUVEM (UPSTASH REDIS REST API - 100% GRATUITO) ───
+const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL;
+const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+
+async function restoreSessionFromCloud() {
+  if (!REDIS_URL || !REDIS_TOKEN) return false;
+  try {
+    const res = await fetch(`${REDIS_URL}/get/fabyshop_wa_session`, {
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}` }
+    });
+    const data = await res.json();
+    if (data && data.result) {
+      const filesMap = typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
+      if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
+      for (const [filename, content] of Object.entries(filesMap)) {
+        fs.writeFileSync(path.join(AUTH_DIR, filename), content, 'utf8');
+      }
+      console.log(`[Persistência Cloud] 🟢 Sessão restaurada com sucesso do Redis (${Object.keys(filesMap).length} arquivos)!`);
+      return true;
+    }
+  } catch (err) {
+    console.warn('[Persistência Cloud] Falha ao restaurar sessão do Redis:', err.message);
+  }
+  return false;
+}
+
+let _backupTimeout = null;
+async function backupSessionToCloud() {
+  if (!REDIS_URL || !REDIS_TOKEN) return;
+  if (!fs.existsSync(AUTH_DIR)) return;
+
+  if (_backupTimeout) clearTimeout(_backupTimeout);
+  _backupTimeout = setTimeout(async () => {
+    try {
+      const files = fs.readdirSync(AUTH_DIR);
+      const filesMap = {};
+      for (const f of files) {
+        filesMap[f] = fs.readFileSync(path.join(AUTH_DIR, f), 'utf8');
+      }
+      const payload = JSON.stringify(filesMap);
+      await fetch(`${REDIS_URL}/set/fabyshop_wa_session`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${REDIS_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify([payload])
+      });
+      console.log(`[Persistência Cloud] ☁️ Sessão salva no Redis com sucesso (${files.length} arquivos)!`);
+    } catch (err) {
+      console.warn('[Persistência Cloud] Falha ao salvar sessão no Redis:', err.message);
+    }
+  }, 2000);
+}
+
 // Inicia a Conexão com o WhatsApp via Baileys
 async function startWhatsAppBot() {
   try {
+    // Tenta restaurar sessão persistente da nuvem caso a pasta local esteja vazia
+    await restoreSessionFromCloud();
+
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
     const { version, isLatest } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307], isLatest: true }));
 
@@ -150,7 +208,10 @@ async function startWhatsAppBot() {
       syncFullHistory: false
     });
 
-    sock.ev.on('creds.update', saveCreds);
+    sock.ev.on('creds.update', async () => {
+      await saveCreds();
+      backupSessionToCloud();
+    });
 
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
@@ -190,6 +251,11 @@ async function startWhatsAppBot() {
           if (fs.existsSync(AUTH_DIR)) {
             fs.rmSync(AUTH_DIR, { recursive: true, force: true });
           }
+          if (REDIS_URL && REDIS_TOKEN) {
+            fetch(`${REDIS_URL}/del/fabyshop_wa_session`, {
+              headers: { Authorization: `Bearer ${REDIS_TOKEN}` }
+            }).catch(() => {});
+          }
           reconnectAttempts = 0;
           setTimeout(startWhatsAppBot, 3000);
         }
@@ -205,6 +271,7 @@ async function startWhatsAppBot() {
         console.log(`[WhatsApp Bot] 📱 Número Ativo: +${connectedPhone}`);
         console.log(`[WhatsApp Bot] 🚀 Pronto para enviar notificações automáticas!`);
         console.log('======================================================\n');
+        backupSessionToCloud();
       }
     });
 
@@ -288,6 +355,11 @@ app.post('/api/disconnect', async (req, res) => {
     }
     if (fs.existsSync(AUTH_DIR)) {
       fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+    }
+    if (REDIS_URL && REDIS_TOKEN) {
+      fetch(`${REDIS_URL}/del/fabyshop_wa_session`, {
+        headers: { Authorization: `Bearer ${REDIS_TOKEN}` }
+      }).catch(() => {});
     }
     connectionStatus = 'disconnected';
     connectedPhone = '';
