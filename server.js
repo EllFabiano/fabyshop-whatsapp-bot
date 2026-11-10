@@ -124,6 +124,41 @@ function buildClientMessage(type, data) {
         `Obrigado por escolher a FABY SHOP! 🔥`;
     }
 
+    case 'order_rejected':
+    case 'order_cancelled':
+    case 'order_failed': {
+      const item = data.package || data.productName || data.service || 'Pedido de Recarga';
+      const motivo = data.failReason || data.reason || 'Dados incorretos ou verificação não aprovada';
+      const gameId = data.gameId ? `\n🎮 *ID Free Fire:* ${data.gameId}` : '';
+      const reembolsado = data.refunded 
+        ? `\n💎 *Reembolso Efetuado:* O saldo de Faby Coins (F€) foi totalmente devolvido à sua carteira no site!\n`
+        : '';
+
+      return `Olá, *${nome}*! ⚠️\n\n` +
+        `Informamos que o seu pedido de *${item}* na *FABY SHOP* foi *CANCELADO / REJEITADO*.\n\n` +
+        `❌ *Motivo da Rejeição:*\n` +
+        `» *${motivo}*\n` +
+        gameId + '\n' +
+        reembolsado +
+        `\nℹ️ Se precisar de ajuda ou desejar corrigir as informações, acesse o seu perfil ou fale com o suporte:\n` +
+        `👉 ${siteUrl}\n\n` +
+        `Equipe *FABY SHOP*.`;
+    }
+
+    case 'deposit_rejected':
+    case 'deposit_cancelled': {
+      const amount = data.requestedFp || data.amount || '0';
+      const motivo = data.failReason || data.reason || 'Comprovativo ilegível, inválido ou dados divergentes';
+
+      return `Olá, *${nome}*! ⚠️\n\n` +
+        `Informamos que o seu carregamento de *${amount} Faby Coins (F€)* na *FABY SHOP* foi *REJEITADO*.\n\n` +
+        `❌ *Motivo da Rejeição:*\n` +
+        `» *${motivo}*\n\n` +
+        `ℹ️ Verifique o comprovativo bancário e solicite novamente no site com a imagem legível e completa:\n` +
+        `👉 ${siteUrl}\n\n` +
+        `Equipe *FABY SHOP*.`;
+    }
+
     default: {
       return `Olá, *${nome}*!\n\n` +
         `O seu pedido na *FABY SHOP* foi atualizado com sucesso! ✅\n` +
@@ -344,6 +379,96 @@ app.post('/api/send-order', async (req, res) => {
   } catch (error) {
     console.error(`[WhatsApp Bot] ❌ Erro ao enviar notificação de pedido:`, error);
     return res.status(500).json({ error: 'Falha ao disparar mensagem: ' + error.message });
+  }
+});
+
+// Envio Direto de Notificação para o Administrador (+244940375951)
+const DEFAULT_ADMIN_PHONE = process.env.ADMIN_PHONE || '244940375951';
+
+app.post('/api/notify-admin', async (req, res) => {
+  const { title, details, message, type, orderData, adminPhone } = req.body || {};
+  const targetPhone = adminPhone || DEFAULT_ADMIN_PHONE;
+
+  if (connectionStatus !== 'connected' || !sock) {
+    return res.status(503).json({ error: 'O WhatsApp Bot não está conectado no momento.' });
+  }
+
+  const jid = formatPhoneToJid(targetPhone);
+  if (!jid) {
+    return res.status(400).json({ error: 'Número do administrador inválido.' });
+  }
+
+  let textToSend = message || '';
+
+  if (!textToSend && type && orderData) {
+    const cust = orderData.userName || orderData.customerName || orderData.name || orderData.userEmail || 'Cliente';
+    const clientPhone = orderData.whatsapp || orderData.clientPhone || orderData.userPhone || 'Não informado';
+
+    if (type === 'order' || type === 'order_ff') {
+      const pkg = orderData.package || orderData.packageName || 'Recarga Free Fire';
+      const price = orderData.price || 'N/A';
+      const gid = orderData.gameId || 'N/A';
+      const gnick = orderData.gameNick ? ` (${orderData.gameNick})` : '';
+      const method = orderData.method ? `\n💳 *Método:* ${orderData.method}` : '';
+
+      textToSend = `🛒 *NOVO PEDIDO NA FABY SHOP!* 💎\n\n` +
+        `👤 *Cliente:* ${cust}\n` +
+        `🎮 *ID Free Fire:* ${gid}${gnick}\n` +
+        `📦 *Pacote:* ${pkg}\n` +
+        `💰 *Valor:* ${price}${method}\n` +
+        `📱 *WhatsApp Cliente:* ${clientPhone}\n\n` +
+        `👉 *Acesse o Painel para Aprovar:*\n` +
+        `https://www.fabyshop.shop/admin-fb8x2.html?tab=orders`;
+
+    } else if (type === 'deposit' || type === 'fc_deposit') {
+      const amount = orderData.requestedFp || orderData.amount || '0';
+      const priceKz = orderData.priceKz ? ` (${orderData.priceKz} Kz)` : '';
+      const bank = orderData.bank ? `\n🏦 *Banco/Forma:* ${orderData.bank}` : '';
+
+      textToSend = `💰 *NOVO DEPÓSITO DE F€ SOLICITADO!* 🏦\n\n` +
+        `👤 *Cliente:* ${cust}\n` +
+        `💵 *Valor Solicitado:* ${amount} FC${priceKz}${bank}\n` +
+        `📱 *WhatsApp Cliente:* ${clientPhone}\n\n` +
+        `👉 *Conferir Comprovativo no Painel:*\n` +
+        `https://www.fabyshop.shop/admin-fb8x2.html?tab=fc`;
+
+    } else if (type === 'streaming' || type === 'giftcard' || type === 'loja_order') {
+      const prod = orderData.productName || orderData.service || 'Produto';
+      const price = orderData.price || orderData.fcPrice || 'N/A';
+
+      textToSend = `🛍️ *NOVO PEDIDO NA LOJA!* 🎬\n\n` +
+        `👤 *Cliente:* ${cust}\n` +
+        `📦 *Item:* ${prod}\n` +
+        `💎 *Preço:* ${price}\n` +
+        `📱 *WhatsApp Cliente:* ${clientPhone}\n\n` +
+        `👉 *Acesse para Entregar:*\n` +
+        `https://www.fabyshop.shop/admin-fb8x2.html?tab=subscriptions`;
+
+    } else if (type === 'chat') {
+      const msgTxt = (orderData.text || orderData.message || 'Nova mensagem').substring(0, 150);
+      textToSend = `💬 *NOVA MENSAGEM DE SUPORTE NO SITE!* 🎧\n\n` +
+        `👤 *De:* ${cust}\n` +
+        `📝 "${msgTxt}"\n\n` +
+        `👉 *Responder no Painel:*\n` +
+        `https://www.fabyshop.shop/admin-fb8x2.html`;
+    }
+  }
+
+  if (!textToSend && (title || details)) {
+    textToSend = `🔔 *${title || 'ALERTA FABY SHOP'}*\n\n${details || ''}\n\nhttps://www.fabyshop.shop/admin-fb8x2.html`;
+  }
+
+  if (!textToSend) {
+    return res.status(400).json({ error: 'Nenhum conteúdo fornecido para a notificação.' });
+  }
+
+  try {
+    const result = await sock.sendMessage(jid, { text: textToSend });
+    console.log(`[WhatsApp Bot] 👑 Notificação de Administrador enviada com sucesso para ${jid}`);
+    return res.json({ success: true, jid, messageId: result?.key?.id });
+  } catch (error) {
+    console.error(`[WhatsApp Bot] ❌ Erro ao notificar administrador:`, error);
+    return res.status(500).json({ error: 'Falha ao enviar para o administrador: ' + error.message });
   }
 });
 
