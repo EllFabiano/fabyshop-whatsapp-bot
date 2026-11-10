@@ -134,8 +134,8 @@ function buildClientMessage(type, data) {
 }
 
 // ─── PERSISTÊNCIA EM NUVEM (UPSTASH REDIS REST API - 100% GRATUITO) ───
-const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL;
-const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || 'https://warm-sculpin-134503.upstash.io';
+const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || 'gQAAAAAAAg1nAAIgcDJlZmVkMWJiYzAzM2E0ODg1OTU3MDFiMWQ1MjdhNDM2ZA';
 
 async function restoreSessionFromCloud() {
   if (!REDIS_URL || !REDIS_TOKEN) return false;

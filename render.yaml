@@ -8,4 +8,8 @@ services:
     envVars:
       - key: NODE_VERSION
         value: 20.18.0
+      - key: UPSTASH_REDIS_REST_URL
+        value: https://warm-sculpin-134503.upstash.io
+      - key: UPSTASH_REDIS_REST_TOKEN
+        value: gQAAAAAAAg1nAAIgcDJlZmVkMWJiYzAzM2E0ODg1OTU3MDFiMWQ1MjdhNDM2ZA
 
