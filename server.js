@@ -130,24 +130,39 @@ function buildClientMessage(type, data) {
 
     case 'streaming': {
       const produto = data.productName || data.service || 'Assinatura Streaming';
-      const email = data.netflixEmail || data.email || 'N/A';
-      const senha = data.netflixPassword || data.password || 'N/A';
-      const perfil = data.netflixProfile || data.profile || 'Perfil 1';
-      const pin = data.netflixPin || data.profilePin ? `PIN: ${data.netflixPin || data.profilePin}` : 'Sem PIN';
+      const email = data.accountEmail || data.netflixEmail || data.email || data.login || 'N/A';
+      const senha = data.accountPassword || data.netflixPassword || data.password || data.senha || 'N/A';
+      const perfil = data.profileName || data.netflixProfile || data.profile || 'Perfil Privado';
+      const pin = data.profilePin || data.netflixPin || data.pin || '';
       const validade = data.expireDateStr || '30 Dias';
+      const notas = data.adminNotes || data.notes || '';
 
       return `Olá, *${nome}*! 🎬🍿\n\n` +
         `A sua assinatura de *${produto}* na *FABY SHOP* já está ativa e pronta para você assistir! 🎉\n\n` +
         `📋 *Dados de Acesso:*\n` +
         `📧 *E-mail / Login:* \`${email}\`\n` +
         `🔑 *Senha:* \`${senha}\`\n` +
-        `👤 *Seu Perfil:* ${perfil} (${pin})\n` +
-        `📅 *Validade:* ${validade}\n\n` +
-        `⚠️ *Aviso Importante:*\n` +
+        `👤 *Seu Perfil:* ${perfil}${pin ? ` (PIN: ${pin})` : ''}\n` +
+        `📅 *Validade:* ${validade}\n` +
+        (notas ? `📝 *Observações:* ${notas}\n` : '') +
+        `\n⚠️ *Avisos Importantes:*\n` +
         `• Utilize apenas o seu perfil designado.\n` +
-        `• Não altere o email ou senha da conta compartilhada.\n\n` +
+        `• Não altere o email ou senha da conta compartilhada.\n` +
+        `• Caso a Netflix solicite código de login ao entrar, acesse o seu perfil no site e clique em *"Pedir Novo Código"* que o administrador fornecerá rapidamente!\n\n` +
         `Acesse o seu histórico na FABY SHOP: 👉 ${siteUrl}\n\n` +
         `Tenha um ótimo entretenimento! 📺✨`;
+    }
+
+    case 'netflix_code': {
+      const codigo = data.code || data.loginCode || '0000';
+      const perfil = data.profileName || data.profile || 'Perfil Privado';
+      return `Olá, *${nome}*! 🎬🍿\n\n` +
+        `Aqui está o seu *Código de Acesso da Netflix* solicitado para o perfil *${perfil}*:\n\n` +
+        `🔑 *CÓDIGO DE LOGIN:* \`${codigo}\`\n\n` +
+        `⏱️ *Validade:* Este código é temporário e expira em *10 minutos*.\n` +
+        `Insira-o imediatamente no aplicativo ou site da Netflix para liberar o seu acesso!\n\n` +
+        `Acesse seu perfil: 👉 ${siteUrl}\n\n` +
+        `Equipe *FABY SHOP* ✨`;
     }
 
     case 'fc_deposit': {
