@@ -28,23 +28,63 @@ let currentQrDataUrl = null;
 let currentQrRaw = '';
 let reconnectAttempts = 0;
 
-// Formatador de número para o formato WhatsApp JID (ex: 5511999308909@s.whatsapp.net)
-function formatPhoneToJid(phone) {
+// Normaliza qualquer número para dígitos com DDI (Angola 244, Moçambique 258, Brasil 55, Portugal 351, EUA 1...)
+function normalizePhoneDigits(phone) {
   if (!phone) return null;
   let digits = String(phone).replace(/\D/g, '');
   if (!digits) return null;
   if (digits.startsWith('00')) digits = digits.slice(2);
-  
-  // Se for celular de Angola e tiver 9 dígitos sem DDI
-  if (digits.length === 9 && (digits.startsWith('9') || digits.startsWith('8'))) {
-    digits = '244' + digits;
-  }
-  // Se for celular do Brasil sem DDI (10 ou 11 dígitos)
-  if ((digits.length === 10 || digits.length === 11) && !digits.startsWith('55')) {
-    digits = '55' + digits;
+  if (!digits) return null;
+
+  // Já vem com DDI completo (o comprimento total confirma o país)
+  if (digits.startsWith('55') && (digits.length === 12 || digits.length === 13)) return digits; // Brasil
+  if (digits.startsWith('244') && digits.length === 12) return digits; // Angola
+  if (digits.startsWith('258') && digits.length === 12) return digits; // Moçambique
+  if (digits.startsWith('351') && digits.length === 12) return digits; // Portugal
+
+  // Brasil sem DDI: DDD (2) + 8 ou 9 dígitos. Inclui DDD 55 (RS) e DDDs 1x (11 = São Paulo).
+  if (digits.length === 10 || digits.length === 11) {
+    // EUA: 1 + 10 dígitos (o 3º dígito de um celular brasileiro de 11 dígitos é sempre 9)
+    if (digits.length === 11 && digits.startsWith('1') && digits[2] !== '9') return digits;
+    return '55' + digits;
   }
 
-  return `${digits}@s.whatsapp.net`;
+  // Angola (9 dígitos começando com 9) / Moçambique (9 dígitos começando com 8)
+  if (digits.length === 9 && digits.startsWith('9')) return '244' + digits;
+  if (digits.length === 9 && digits.startsWith('8')) return '258' + digits;
+
+  return digits;
+}
+
+// Formatador de número para o formato WhatsApp JID (ex: 5511999308909@s.whatsapp.net)
+function formatPhoneToJid(phone) {
+  const digits = normalizePhoneDigits(phone);
+  return digits ? `${digits}@s.whatsapp.net` : null;
+}
+
+// Resolve o JID REAL no WhatsApp. Necessário para o Brasil: contas antigas fora de SP/RJ/ES etc.
+// estão registadas SEM o 9º dígito, e enviar para o JID errado "funciona" mas a mensagem nunca chega.
+async function resolveJid(phone) {
+  const digits = normalizePhoneDigits(phone);
+  if (!digits) return { jid: null, error: 'Número de WhatsApp inválido.' };
+
+  const candidates = [digits];
+  if (digits.startsWith('55') && digits.length >= 12) {
+    const ddd = digits.slice(2, 4);
+    const num = digits.slice(4);
+    if (num.length === 9 && num[0] === '9') candidates.push('55' + ddd + num.slice(1)); // sem o 9
+    else if (num.length === 8) candidates.unshift('55' + ddd + '9' + num);              // com o 9
+  }
+
+  try {
+    const results = await sock.onWhatsApp(...candidates.map(c => c + '@s.whatsapp.net'));
+    const found = (results || []).find(r => r && r.exists);
+    if (found && found.jid) return { jid: found.jid, digits };
+    return { jid: null, digits, notFound: true, error: `O número +${digits} não tem WhatsApp (ou está incorreto).` };
+  } catch (e) {
+    console.warn('[WhatsApp Bot] Falha ao verificar número, usando JID padrão:', e.message);
+    return { jid: `${digits}@s.whatsapp.net`, digits };
+  }
 }
 
 // Construtor de mensagens para clientes
@@ -339,9 +379,10 @@ app.post('/api/send', async (req, res) => {
     return res.status(503).json({ error: 'O WhatsApp Bot não está conectado no momento. Conecte pelo QR Code primeiro.' });
   }
 
-  const jid = formatPhoneToJid(phone);
+  const resolved = await resolveJid(phone);
+  const jid = resolved.jid;
   if (!jid) {
-    return res.status(400).json({ error: 'Número de WhatsApp inválido.' });
+    return res.status(resolved.notFound ? 404 : 400).json({ error: resolved.error || 'Número de WhatsApp inválido.' });
   }
 
   try {
@@ -365,9 +406,10 @@ app.post('/api/send-order', async (req, res) => {
     return res.status(503).json({ error: 'O WhatsApp Bot não está conectado no momento.' });
   }
 
-  const jid = formatPhoneToJid(phone);
+  const resolved = await resolveJid(phone);
+  const jid = resolved.jid;
   if (!jid) {
-    return res.status(400).json({ error: 'Número de telefone inválido.' });
+    return res.status(resolved.notFound ? 404 : 400).json({ error: resolved.error || 'Número de telefone inválido.' });
   }
 
   const messageText = buildClientMessage(type, orderData);
@@ -393,9 +435,10 @@ app.post('/api/notify-admin', async (req, res) => {
     return res.status(503).json({ error: 'O WhatsApp Bot não está conectado no momento.' });
   }
 
-  const jid = formatPhoneToJid(targetPhone);
+  const resolved = await resolveJid(targetPhone);
+  const jid = resolved.jid;
   if (!jid) {
-    return res.status(400).json({ error: 'Número do administrador inválido.' });
+    return res.status(resolved.notFound ? 404 : 400).json({ error: resolved.error || 'Número do administrador inválido.' });
   }
 
   let textToSend = message || '';
