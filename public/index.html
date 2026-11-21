@@ -256,10 +256,24 @@
 
   <script>
     let pollInterval = null;
+    let isConnected = false;
+    let currentPollRate = 0;
+
+    function setPollRate(ms) {
+      if (currentPollRate === ms) return;
+      currentPollRate = ms;
+      if (pollInterval) clearInterval(pollInterval);
+      pollInterval = setInterval(checkStatus, ms);
+    }
 
     async function checkStatus() {
+      // Economia extrema de banda: não faz requisições se a aba estiver em segundo plano
+      if (document.hidden) return;
+
       try {
-        const res = await fetch('/api/status');
+        // Só solicita o QR Code pesado em base64 se ainda NÃO estiver conectado
+        const endpoint = isConnected ? '/api/status' : '/api/status?qr=1';
+        const res = await fetch(endpoint);
         const data = await res.json();
 
         const dot = document.getElementById('status-dot');
@@ -271,35 +285,52 @@
         const phonePill = document.getElementById('connected-phone');
 
         if (data.connected) {
+          isConnected = true;
           dot.className = 'dot connected';
           text.textContent = '🟢 Conectado (' + (data.phone || 'Ativo') + ')';
           viewQr.style.display = 'none';
           viewConn.style.display = 'block';
           btnDisc.style.display = 'inline-block';
           if (phonePill && data.phone) phonePill.textContent = data.phone;
-        } else if (data.qr) {
+          
+          // Quando conectado, reduz drasticamente o polling para 30 segundos
+          setPollRate(30000);
+        } else if (data.hasQr || data.qr) {
+          isConnected = false;
           dot.className = 'dot connecting';
           text.textContent = '📱 Aguardando Escaneamento';
-          qrImg.src = data.qr;
+          if (data.qr) qrImg.src = data.qr;
           viewQr.style.display = 'block';
           viewConn.style.display = 'none';
           btnDisc.style.display = 'none';
+          
+          // Durante escaneamento checa a cada 4 segundos
+          setPollRate(4000);
         } else {
+          isConnected = false;
           dot.className = 'dot';
           text.textContent = '⏳ Gerando QR Code...';
           viewQr.style.display = 'none';
           viewConn.style.display = 'none';
           btnDisc.style.display = 'none';
+          setPollRate(4000);
         }
       } catch (e) {
         document.getElementById('status-dot').className = 'dot';
         document.getElementById('status-text').textContent = '🔴 Servidor Offline';
+        setPollRate(15000);
       }
     }
+
+    // Retoma checagem imediatamente ao voltar para a aba
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) checkStatus();
+    });
 
     async function disconnectWhatsApp() {
       if (!confirm('Deseja realmente desconectar este WhatsApp e escanear um novo número?')) return;
       try {
+        isConnected = false;
         await fetch('/api/disconnect', { method: 'POST' });
         checkStatus();
       } catch (e) {
@@ -333,7 +364,7 @@
     }
 
     checkStatus();
-    pollInterval = setInterval(checkStatus, 3000);
+    setPollRate(4000);
   </script>
 </body>
 </html>

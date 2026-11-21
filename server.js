@@ -11,6 +11,7 @@ const QRCode = require('qrcode');
 const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3001;
 const AUTH_DIR = path.join(__dirname, 'auth_info');
@@ -250,20 +251,52 @@ async function restoreSessionFromCloud() {
 }
 
 let _backupTimeout = null;
-async function backupSessionToCloud() {
+let _lastBackupHash = '';
+let _lastBackupTime = 0;
+const BACKUP_MIN_INTERVAL_MS = 15 * 60 * 1000; // No máximo 1 backup a cada 15 min em updates normais
+
+async function backupSessionToCloud(force = false) {
   if (!REDIS_URL || !REDIS_TOKEN) return;
   if (!fs.existsSync(AUTH_DIR)) return;
 
-  if (_backupTimeout) clearTimeout(_backupTimeout);
+  const now = Date.now();
+  // Se não for forçado e o último backup foi há menos de 15 minutos, adia
+  if (!force && (now - _lastBackupTime < BACKUP_MIN_INTERVAL_MS)) {
+    if (!_backupTimeout) {
+      const waitTime = BACKUP_MIN_INTERVAL_MS - (now - _lastBackupTime);
+      _backupTimeout = setTimeout(() => {
+        _backupTimeout = null;
+        backupSessionToCloud(false);
+      }, waitTime);
+    }
+    return;
+  }
+
+  if (_backupTimeout) {
+    clearTimeout(_backupTimeout);
+    _backupTimeout = null;
+  }
+
+  const delayMs = force ? 1000 : 5000;
   _backupTimeout = setTimeout(async () => {
+    _backupTimeout = null;
     try {
       const files = fs.readdirSync(AUTH_DIR);
+      if (!files.length) return;
+
       const filesMap = {};
       for (const f of files) {
         filesMap[f] = fs.readFileSync(path.join(AUTH_DIR, f), 'utf8');
       }
       const payload = JSON.stringify(filesMap);
-      await fetch(`${REDIS_URL}/set/fabyshop_wa_session`, {
+
+      // Checa se o conteúdo realmente mudou comparado com o último envio (economiza dados)
+      const hash = crypto.createHash('md5').update(payload).digest('hex');
+      if (!force && hash === _lastBackupHash) {
+        return; // Nada mudou! Não gasta largura de banda com o Redis
+      }
+
+      const res = await fetch(`${REDIS_URL}/set/fabyshop_wa_session`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${REDIS_TOKEN}`,
@@ -271,11 +304,18 @@ async function backupSessionToCloud() {
         },
         body: JSON.stringify([payload])
       });
-      console.log(`[Persistência Cloud] ☁️ Sessão salva no Redis com sucesso (${files.length} arquivos)!`);
+
+      if (res.ok) {
+        _lastBackupHash = hash;
+        _lastBackupTime = Date.now();
+        console.log(`[Persistência Cloud] ☁️ Sessão salva no Redis (${files.length} arquivos, hash: ${hash.slice(0, 8)})!`);
+      } else {
+        console.warn(`[Persistência Cloud] Aviso ao salvar no Redis (Status ${res.status})`);
+      }
     } catch (err) {
       console.warn('[Persistência Cloud] Falha ao salvar sessão no Redis:', err.message);
     }
-  }, 2000);
+  }, delayMs);
 }
 
 // Inicia a Conexão com o WhatsApp via Baileys
@@ -295,12 +335,16 @@ async function startWhatsAppBot() {
       printQRInTerminal: false,
       auth: state,
       browser: ['FABY SHOP Notifier', 'Chrome', '1.0.0'],
-      syncFullHistory: false
+      syncFullHistory: false,
+      shouldSyncHistoryMessage: () => false,
+      markOnlineOnConnect: false,
+      // Ignora grupos, transmissões e status para economizar banda e CPU:
+      shouldIgnoreJid: (jid) => !jid || jid.endsWith('@g.us') || jid.endsWith('@broadcast') || jid.includes('status')
     });
 
     sock.ev.on('creds.update', async () => {
       await saveCreds();
-      backupSessionToCloud();
+      backupSessionToCloud(false);
     });
 
     sock.ev.on('connection.update', async (update) => {
@@ -361,7 +405,7 @@ async function startWhatsAppBot() {
         console.log(`[WhatsApp Bot] 📱 Número Ativo: +${connectedPhone}`);
         console.log(`[WhatsApp Bot] 🚀 Pronto para enviar notificações automáticas!`);
         console.log('======================================================\n');
-        backupSessionToCloud();
+        backupSessionToCloud(true);
       }
     });
 
@@ -373,15 +417,30 @@ async function startWhatsAppBot() {
 
 // ─── ENDPOINTS DA API HTTP ───
 
-// Status da Conexão
+// Status da Conexão (Ultra-leve: ~60 bytes para não estourar os 5GB do Render)
 app.get('/api/status', (req, res) => {
+  const wantsQr = req.query.qr === '1' || req.query.qr === 'true';
   res.json({
     status: connectionStatus,
     connected: connectionStatus === 'connected',
     phone: connectedPhone ? `+${connectedPhone}` : null,
-    qr: currentQrDataUrl
+    hasQr: Boolean(currentQrRaw),
+    // Envia o Base64 pesado (~40KB) apenas quando explicitamente solicitado via ?qr=1
+    qr: wantsQr ? currentQrDataUrl : null
   });
 });
+
+// Endpoint dedicado para imagem do QR Code (usado na tela de escanear)
+app.get('/api/qr', (req, res) => {
+  if (connectionStatus === 'connected') {
+    return res.json({ connected: true, qr: null });
+  }
+  return res.json({ connected: false, hasQr: Boolean(currentQrRaw), qr: currentQrDataUrl });
+});
+
+// Endpoint leve para Uptime Monitors, Keep-Alive e Health Checks (apenas 2 bytes de resposta)
+app.get('/api/ping', (req, res) => res.status(200).send('OK'));
+app.get('/health', (req, res) => res.status(200).send('OK'));
 
 // Envio de Mensagem Genérica
 app.post('/api/send', async (req, res) => {
@@ -565,12 +624,12 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`======================================================`);
   startWhatsAppBot();
 
-  // Auto-Ping para manter o servidor acordado 24h caso hospedado no Render / Nuvem
+  // Auto-Ping para manter o servidor acordado 24h caso hospedado no Render / Nuvem (usa /api/ping de apenas 2 bytes)
   const externalUrl = process.env.RENDER_EXTERNAL_URL || process.env.APP_URL;
   if (externalUrl) {
-    console.log(`[Keep-Alive] Configurado auto-ping a cada 10 min para: ${externalUrl}`);
+    console.log(`[Keep-Alive] Configurado auto-ping a cada 10 min para: ${externalUrl}/api/ping`);
     setInterval(() => {
-      fetch(`${externalUrl}/api/status`)
+      fetch(`${externalUrl}/api/ping`)
         .then(() => console.log(`[Keep-Alive] ⏰ Auto-ping executado (${new Date().toLocaleTimeString()})`))
         .catch(err => console.warn('[Keep-Alive] Falha no auto-ping:', err.message));
     }, 10 * 60 * 1000);

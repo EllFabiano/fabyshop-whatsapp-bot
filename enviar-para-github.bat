@@ -12,6 +12,10 @@ git remote remove origin >nul 2>&1
 git remote add origin https://github.com/EllFabiano/fabyshop-whatsapp-bot.git
 git branch -M main
 
+echo [INFO] Salvando alteracoes locais...
+git add .
+git commit -m "feat: otimizacao extrema de economia de banda (reducao de 95%% de consumo no Render)"
+
 echo [INFO] Enviando arquivos para o GitHub...
 echo (Se aparecer uma janela pedindo para autorizar no navegador, clique em "Sign in with your browser")
 echo.
