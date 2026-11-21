@@ -236,13 +236,33 @@ async function restoreSessionFromCloud() {
     });
     const data = await res.json();
     if (data && data.result) {
-      const filesMap = typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
-      if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
-      for (const [filename, content] of Object.entries(filesMap)) {
-        fs.writeFileSync(path.join(AUTH_DIR, filename), content, 'utf8');
+      let cur = data.result;
+      // Desembrulha arrays e strings aninhadas do Redis com segurança
+      for (let i = 0; i < 10; i++) {
+        if (typeof cur === 'string') {
+          try { cur = JSON.parse(cur); } catch (e) { break; }
+        }
+        if (Array.isArray(cur)) {
+          cur = cur[0];
+        } else if (typeof cur === 'object' && cur !== null) {
+          if ('creds.json' in cur) break;
+          if ('0' in cur && typeof cur['0'] === 'string') cur = cur['0'];
+          else break;
+        }
       }
-      console.log(`[Persistência Cloud] 🟢 Sessão restaurada com sucesso do Redis (${Object.keys(filesMap).length} arquivos)!`);
-      return true;
+
+      if (cur && typeof cur === 'object' && ('creds.json' in cur || Object.keys(cur).some(k => k.endsWith('.json')))) {
+        if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
+        let written = 0;
+        for (const [filename, content] of Object.entries(cur)) {
+          if (typeof filename === 'string' && filename.endsWith('.json') && typeof content === 'string') {
+            fs.writeFileSync(path.join(AUTH_DIR, filename), content, 'utf8');
+            written++;
+          }
+        }
+        console.log(`[Persistência Cloud] 🟢 Sessão restaurada com sucesso do Redis (${written} arquivos JSON incluindo creds.json)!`);
+        return written > 0;
+      }
     }
   } catch (err) {
     console.warn('[Persistência Cloud] Falha ao restaurar sessão do Redis:', err.message);
@@ -281,7 +301,7 @@ async function backupSessionToCloud(force = false) {
   _backupTimeout = setTimeout(async () => {
     _backupTimeout = null;
     try {
-      const files = fs.readdirSync(AUTH_DIR);
+      const files = fs.readdirSync(AUTH_DIR).filter(f => f.endsWith('.json'));
       if (!files.length) return;
 
       const filesMap = {};
