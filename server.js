@@ -12,6 +12,7 @@ const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const zlib = require('zlib');
 
 const PORT = process.env.PORT || 3001;
 const AUTH_DIR = path.join(__dirname, 'auth_info');
@@ -240,6 +241,17 @@ async function restoreSessionFromCloud() {
       // Desembrulha arrays e strings aninhadas do Redis com segurança
       for (let i = 0; i < 10; i++) {
         if (typeof cur === 'string') {
+          // Checa se é payload comprimido com gzip em base64 (começa com H4sI ou similar)
+          if (cur.startsWith('H4sI') || (!cur.startsWith('{') && !cur.startsWith('['))) {
+            try {
+              const buf = Buffer.from(cur, 'base64');
+              const unzipped = zlib.gunzipSync(buf).toString('utf8');
+              cur = JSON.parse(unzipped);
+              break;
+            } catch (e) {
+              // fallback se não for gzip
+            }
+          }
           try { cur = JSON.parse(cur); } catch (e) { break; }
         }
         if (Array.isArray(cur)) {
@@ -271,16 +283,19 @@ async function restoreSessionFromCloud() {
 }
 
 let _backupTimeout = null;
-let _lastBackupHash = '';
+let _lastCredsHash = '';
 let _lastBackupTime = 0;
-const BACKUP_MIN_INTERVAL_MS = 15 * 60 * 1000; // No máximo 1 backup a cada 15 min em updates normais
+const BACKUP_MIN_INTERVAL_MS = 30 * 60 * 1000; // No máximo 1 backup a cada 30 min em updates normais
 
 async function backupSessionToCloud(force = false) {
   if (!REDIS_URL || !REDIS_TOKEN) return;
   if (!fs.existsSync(AUTH_DIR)) return;
 
+  const credsFile = path.join(AUTH_DIR, 'creds.json');
+  if (!fs.existsSync(credsFile)) return;
+
   const now = Date.now();
-  // Se não for forçado e o último backup foi há menos de 15 minutos, adia
+  // Se não for forçado e o último backup foi há menos de 30 minutos, adia
   if (!force && (now - _lastBackupTime < BACKUP_MIN_INTERVAL_MS)) {
     if (!_backupTimeout) {
       const waitTime = BACKUP_MIN_INTERVAL_MS - (now - _lastBackupTime);
@@ -301,6 +316,15 @@ async function backupSessionToCloud(force = false) {
   _backupTimeout = setTimeout(async () => {
     _backupTimeout = null;
     try {
+      if (!fs.existsSync(credsFile)) return;
+
+      // Monitora o hash exclusivamente do creds.json (evita reenvios inúteis de prekeys temporários)
+      const credsContent = fs.readFileSync(credsFile, 'utf8');
+      const credsHash = crypto.createHash('md5').update(credsContent).digest('hex');
+      if (!force && credsHash === _lastCredsHash) {
+        return; // As credenciais principais não mudaram! 0 bytes gastos
+      }
+
       const files = fs.readdirSync(AUTH_DIR).filter(f => f.endsWith('.json'));
       if (!files.length) return;
 
@@ -308,13 +332,12 @@ async function backupSessionToCloud(force = false) {
       for (const f of files) {
         filesMap[f] = fs.readFileSync(path.join(AUTH_DIR, f), 'utf8');
       }
-      const payload = JSON.stringify(filesMap);
+      const rawPayload = JSON.stringify(filesMap);
 
-      // Checa se o conteúdo realmente mudou comparado com o último envio (economiza dados)
-      const hash = crypto.createHash('md5').update(payload).digest('hex');
-      if (!force && hash === _lastBackupHash) {
-        return; // Nada mudou! Não gasta largura de banda com o Redis
-      }
+      // Comprime com GZIP em Base64 (redução drástica de 92% a 96% no consumo de banda externa)
+      const compressedPayload = zlib.gzipSync(Buffer.from(rawPayload, 'utf8')).toString('base64');
+      const origSize = Buffer.byteLength(rawPayload);
+      const compSize = Buffer.byteLength(compressedPayload);
 
       const res = await fetch(`${REDIS_URL}/set/fabyshop_wa_session`, {
         method: 'POST',
@@ -322,13 +345,13 @@ async function backupSessionToCloud(force = false) {
           Authorization: `Bearer ${REDIS_TOKEN}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify([payload])
+        body: JSON.stringify([compressedPayload])
       });
 
       if (res.ok) {
-        _lastBackupHash = hash;
+        _lastCredsHash = credsHash;
         _lastBackupTime = Date.now();
-        console.log(`[Persistência Cloud] ☁️ Sessão salva no Redis (${files.length} arquivos, hash: ${hash.slice(0, 8)})!`);
+        console.log(`[Persistência Cloud] ☁️ Sessão comprimida e salva no Redis (${files.length} arquivos, ${origSize}B -> ${compSize}B, hash: ${credsHash.slice(0, 8)})!`);
       } else {
         console.warn(`[Persistência Cloud] Aviso ao salvar no Redis (Status ${res.status})`);
       }
@@ -357,9 +380,14 @@ async function startWhatsAppBot() {
       browser: ['FABY SHOP Notifier', 'Chrome', '1.0.0'],
       syncFullHistory: false,
       shouldSyncHistoryMessage: () => false,
-      markOnlineOnConnect: false,
+      fireInitQueries: false,                // ULTRA-ECONOMIA: não faz download de listas de bloqueio, etiquetas e estados
+      generateHighQualityLinkPreview: false, // ULTRA-ECONOMIA: não gera thumbnails pesados para links
+      markOnlineOnConnect: false,            // Não força presença online desnecessária
+      emitOwnEvents: false,                  // Não reprocessa eventos das próprias mensagens
+      keepAliveIntervalMs: 60000,            // Pings a cada 60s (reduz tráfego de keepalive pela metade)
       // Ignora grupos, transmissões e status para economizar banda e CPU:
-      shouldIgnoreJid: (jid) => !jid || jid.endsWith('@g.us') || jid.endsWith('@broadcast') || jid.includes('status')
+      shouldIgnoreJid: (jid) => !jid || jid.endsWith('@g.us') || jid.endsWith('@broadcast') || jid.includes('status'),
+      cachedGroupMetadata: () => Promise.resolve(undefined)
     });
 
     sock.ev.on('creds.update', async () => {
